@@ -16,6 +16,7 @@ from ..utils import (
     orderedSet,
     str_or_none,
     str_to_int,
+    try_get,
     unescapeHTML,
     unified_timestamp,
     url_or_none,
@@ -64,10 +65,14 @@ class VKBaseIE(InfoExtractor):
 
     def _download_payload(self, path, video_id, data, fatal=True):
         data['al'] = 1
+        url = 'https://vk.com/%s.php' % path
         code, payload = self._download_json(
-            'https://vk.com/%s.php' % path, video_id,
+            url, video_id,
             data=urlencode_postdata(data), fatal=fatal,
-            headers={'X-Requested-With': 'XMLHttpRequest'})['payload']
+            headers={
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': url,
+            })['payload']
         if code == '3':
             self.raise_login_required()
         elif code == '8':
@@ -87,22 +92,22 @@ class VKIE(VKBaseIE):
                             )
                             ext\.php\?(?P<embed_query>.*?\boid=(?P<oid>-?\d+).*?\bid=(?P<id>\d+).*)|
                             (?:
-                                (?:(?:m|new)\.)?vk\.com/(?:.+?\?.*?z=)?video|
+                                (?:(?:m|new)\.)?vk\.com/(?:.+?\?.*?z=)?video|clip|
                                 (?:www\.)?daxab.com/embed/
                             )
-                            (?P<videoid>-?\d+_\d+)(?:.*\blist=(?P<list_id>[\da-f]+))?
+                            (?P<videoid>-?\d+_\d+)(?:.*\blist=(?P<list_id>[\da-f]+|ln-[\da-zA-Z]+))?
                         )
                     '''
     _TESTS = [
         {
             'url': 'http://vk.com/videos-77521?z=video-77521_162222515%2Fclub77521',
-            'md5': '7babad3b85ea2e91948005b1b8b0cb84',
+            'md5': '56df4e32658e1ffb77fdf2548327f73a',
             'info_dict': {
                 'id': '-77521_162222515',
                 'ext': 'mp4',
                 'title': 'ProtivoGunz - Хуёвая песня',
                 'uploader': 're:(?:Noize MC|Alexander Ilyashenko).*',
-                'uploader_id': '-77521',
+                'uploader_id': '39545378',
                 'duration': 195,
                 'timestamp': 1329049880,
                 'upload_date': '20120212',
@@ -124,7 +129,7 @@ class VKIE(VKBaseIE):
         {
             'note': 'Embedded video',
             'url': 'https://vk.com/video_ext.php?oid=-77521&id=162222515&hash=87b046504ccd8bfa',
-            'md5': '7babad3b85ea2e91948005b1b8b0cb84',
+            'md5': '56df4e32658e1ffb77fdf2548327f73a',
             'info_dict': {
                 'id': '-77521_162222515',
                 'ext': 'mp4',
@@ -133,7 +138,7 @@ class VKIE(VKBaseIE):
                 'duration': 195,
                 'upload_date': '20120212',
                 'timestamp': 1329049880,
-                'uploader_id': '-77521',
+                'uploader_id': '39545378',
             },
         },
         {
@@ -152,6 +157,19 @@ class VKIE(VKBaseIE):
                 'view_count': int,
             },
             'skip': 'Removed',
+        },
+        {
+            'url': 'https://vk.com/video-93049196_456239755?list=ln-cBjJ7S4jYYx3ADnmDT',
+            'info_dict': {
+                'id': '-93049196_456239755',
+                'ext': 'mp4',
+                'title': '8 серия (озвучка)',
+                'duration': 8383,
+                'timestamp': 1640162189,
+                'upload_date': '20211222',
+                'uploader': 'Dizi2021',
+                'uploader_id': '-93049196',
+            },            
         },
         {
             'url': 'http://vk.com/hd_kino_mania?z=video-43215063_168067957%2F15c66b9b533119788d',
@@ -227,6 +245,7 @@ class VKIE(VKBaseIE):
             'params': {
                 'skip_download': True,
             },
+            'skip': 'This video has been deleted',
         },
         {
             # video key is extra_data not url\d+
@@ -254,8 +273,6 @@ class VKIE(VKBaseIE):
                 'title': 'ИгроМир 2016 День 1 — Игромания Утром',
                 'uploader': 'Игромания',
                 'duration': 5239,
-                # TODO: use act=show to extract view_count
-                # 'view_count': int,
                 'upload_date': '20160929',
                 'uploader_id': '-387766',
                 'timestamp': 1475137527,
@@ -298,6 +315,10 @@ class VKIE(VKBaseIE):
             # The video is not available in your region.
             'url': 'https://vk.com/video-51812607_171445436',
             'only_matching': True,
+        },
+        {
+            'url': 'https://vk.com/clip30014565_456240946',
+            'only_matching': True,
         }]
 
     @staticmethod
@@ -314,7 +335,7 @@ class VKIE(VKBaseIE):
         mv_data = {}
         if video_id:
             data = {
-                'act': 'show_inline',
+                'act': 'show',
                 'video': video_id,
             }
             # Some videos (removed?) can only be downloaded with list id specified
@@ -323,8 +344,10 @@ class VKIE(VKBaseIE):
                 data['list'] = list_id
 
             payload = self._download_payload('al_video', video_id, data)
+            opts = try_get(payload, lambda x: x[-1], dict)
+            if not opts:
+                raise ExtractorError('Invalid payload data')            
             info_page = payload[1]
-            opts = payload[-1]
             mv_data = opts.get('mvData') or {}
             player = opts.get('player') or {}
         else:
